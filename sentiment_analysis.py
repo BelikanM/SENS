@@ -3,11 +3,10 @@ from transformers import pipeline, CamembertTokenizer, CamembertForTokenClassifi
 # Initialisation des pipelines
 sentiment_pipeline = pipeline("sentiment-analysis", model="nlptown/bert-base-multilingual-uncased-sentiment")
 summarization_pipeline = pipeline("summarization", model="facebook/bart-large-cnn")
-
-# Utilisation explicite de CamemBERT pour le NER sans conversion tiktoken
 ner_model = CamembertForTokenClassification.from_pretrained("Jean-Baptiste/camembert-ner")
 ner_tokenizer = CamembertTokenizer.from_pretrained("Jean-Baptiste/camembert-ner")
 ner_pipeline = pipeline("ner", model=ner_model, tokenizer=ner_tokenizer, aggregation_strategy="simple")
+intention_pipeline = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
 
 def extract_text_from_pdf(pdf_path):
     import pdfplumber
@@ -18,13 +17,24 @@ def extract_text_from_pdf(pdf_path):
     except Exception as e:
         return "Erreur: Le fichier n'est pas un PDF valide."
 
+def segment_text(text, max_tokens=512):
+    tokens = text.split()
+    for i in range(0, len(tokens), max_tokens):
+        yield ' '.join(tokens[i:i + max_tokens])
+
 def analyze_document(text):
     if not text:
         return "Aucun contenu à analyser."
-    outputs = sentiment_pipeline(text, truncation=True)
-    positive = sum(1 for output in outputs if 'positive' in output['label'].lower())
-    negative = sum(1 for output in outputs if 'negative' in output['label'].lower())
-    return interpret_results(positive, negative, len(outputs))
+    
+    results = []
+    for segment in segment_text(text):
+        outputs = sentiment_pipeline(segment, truncation=True)
+        positive = sum(1 for output in outputs if 'positive' in output['label'].lower())
+        negative = sum(1 for output in outputs if 'negative' in output['label'].lower())
+        results.append(interpret_results(positive, negative, len(outputs)))
+        
+    # Combine results
+    return " | ".join(results)
 
 def interpret_results(positive, negative, total):
     if positive > negative:
@@ -35,8 +45,7 @@ def interpret_results(positive, negative, total):
         return "L'analyse montre un mélange équilibré de sentiments. Suivi conseillé."
 
 def summarize_text(text):
-    max_len = 130
-    summary = summarization_pipeline(text, max_length=max_len, min_length=30, do_sample=False)
+    summary = summarization_pipeline(text, max_length=130, min_length=30, do_sample=False)
     return summary[0]['summary_text']
 
 def extract_entities(text):
